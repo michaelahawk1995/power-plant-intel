@@ -27,6 +27,9 @@ venv/
 .idea/
 *.swp
 
+# --- claude code per-user settings (each dev has their own permission allowlist) ---
+.claude/settings.local.json
+
 # --- scoping artifacts ---
 .scoping/
 .firecrawl/
