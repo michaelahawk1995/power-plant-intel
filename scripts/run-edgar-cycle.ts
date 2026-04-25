@@ -7,9 +7,8 @@
 //   ONLY=apld pnpm tsx scripts/run-edgar-cycle.ts       # only one ticker
 //   MAX_FILINGS=5 pnpm tsx scripts/run-edgar-cycle.ts   # cap filings per source
 
-import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { loadDotEnv, db, ai, recordCost, htmlToText, chunkText, edgar } from '@ppi/shared';
+import { loadDotEnv, db, htmlToText, chunkText, edgar, callJsonAgent } from '@ppi/shared';
 import { v1 } from '@ppi/prompts';
 
 loadDotEnv();
@@ -63,58 +62,49 @@ function sha256Hex(s: string): string {
   return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
 }
 
-// ---------- triage (Haiku) ----------
+// ---------- triage ----------
+// NOTE on model choice: we originally used Haiku 4.5 here. Repro testing showed
+// Haiku 4.5 silently ignores cache_control (cR=0/cW=0 across consecutive calls
+// even at 3000+ token prefixes), while Sonnet 4.6 caches reliably. With caching,
+// Sonnet's effective cost per cached call ($3/M × 0.1 = $0.30/M reads) beats
+// uncached Haiku ($1/M fresh) at scale. Until Haiku caching is fixed in our
+// account / SDK / model, Sonnet is the cheaper option for warm cycles.
 async function triageChunk(text: string): Promise<{ keep: boolean; reason: string }> {
-  const client = ai();
-  const resp = await client.messages.create({
-    model: 'claude-haiku-4-5',
-    max_tokens: 200,
-    system: [
-      { type: 'text', text: v1.TRIAGE_SYSTEM, cache_control: { type: 'ephemeral' } },
-    ],
-    messages: [{ role: 'user', content: `CHUNK:\n${text}\n\nReturn only JSON.` }],
-  });
-  await recordCost({ agent: 'triage', model: 'claude-haiku-4-5', usage: resp.usage, request_id: resp.id });
-
-  const blk = resp.content.find((b): b is Anthropic.TextBlock => b.type === 'text');
-  const raw = blk?.text ?? '';
-  const m = raw.match(/\{[\s\S]*\}/);
-  if (!m) return { keep: true, reason: 'unparseable triage; defaulting to keep' };
   try {
-    const parsed = TriageSchema.parse(JSON.parse(m[0]));
-    return parsed;
-  } catch {
-    return { keep: true, reason: 'invalid triage JSON; defaulting to keep' };
+    return await callJsonAgent({
+      agent: 'triage',
+      model: 'claude-sonnet-4-6',
+      systemPrompt: v1.TRIAGE_SYSTEM,
+      userPayload: `CHUNK:\n${text}\n\nUse the submit_triage tool.`,
+      schema: TriageSchema,
+      toolName: 'submit_triage',
+      toolDescription: 'Submit the triage decision: keep or drop, with a one-sentence reason.',
+      maxTokens: 400,
+      cacheSystem: true,
+    });
+  } catch (e) {
+    return { keep: true, reason: `triage error (${(e as Error).message.slice(0, 80)}); defaulting to keep` };
   }
 }
 
 // ---------- extraction (Sonnet) ----------
 async function extractChunk(text: string): Promise<Extraction> {
-  const client = ai();
-  const resp = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4000,
-    thinking: { type: 'adaptive' },
-    system: [
-      {
-        type: 'text',
-        text: `${v1.EXTRACTOR_SYSTEM}\n\n--- WORKED EXAMPLE ---\n\n${v1.EXTRACTOR_FEW_SHOT}`,
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
-    messages: [{ role: 'user', content: `CHUNK:\n${text}\n\nReturn only the JSON object.` }],
-  });
-  await recordCost({ agent: 'extraction', model: 'claude-sonnet-4-6', usage: resp.usage, request_id: resp.id });
-
-  const blk = resp.content.find((b): b is Anthropic.TextBlock => b.type === 'text');
-  const raw = blk?.text ?? '';
-  const m = raw.match(/\{[\s\S]*\}/);
-  if (!m) return { facts: [], summary: 'extractor returned no JSON' };
+  const systemBlock = `${v1.EXTRACTOR_SYSTEM}\n\n--- WORKED EXAMPLES ---\n\n${v1.EXTRACTOR_FEW_SHOT}`;
   try {
-    return ExtractionSchema.parse(JSON.parse(m[0]));
+    return await callJsonAgent({
+      agent: 'extraction',
+      model: 'claude-sonnet-4-6',
+      systemPrompt: systemBlock,
+      userPayload: `CHUNK:\n${text}\n\nUse the submit_extraction tool.`,
+      schema: ExtractionSchema,
+      toolName: 'submit_extraction',
+      toolDescription: 'Submit the list of quote-anchored facts plus a one-sentence summary.',
+      maxTokens: 6000,
+      cacheSystem: true,
+    });
   } catch (e) {
-    console.warn(`  extractor parse failed: ${(e as Error).message}`);
-    return { facts: [], summary: 'extractor JSON failed schema' };
+    console.warn(`  extractor failed: ${(e as Error).message.slice(0, 120)}`);
+    return { facts: [], summary: 'extractor failed' };
   }
 }
 

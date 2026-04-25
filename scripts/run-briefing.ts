@@ -42,6 +42,10 @@ interface SignalRow {
   primary_party: string | null;
   county: string | null;
   status: string | null;
+  project_first_seen_at: string | null;
+  project_last_seen_at: string | null;
+  project_mw_low: number | null;
+  project_mw_high: number | null;
   event_type: string;
   event_description: string;
   before_value: any;
@@ -70,7 +74,7 @@ async function loadSignals(): Promise<SignalRow[]> {
   const events = await db().from('change_events').select('id, document_id, event_type, description, before_value, after_value').in('id', eventIds);
   const eventById = new Map<number, any>((events.data ?? []).map((e) => [(e as any).id, e]));
 
-  const projects = await db().from('projects').select('id, canonical_name, primary_party, county, status').in('id', projIds);
+  const projects = await db().from('projects').select('id, canonical_name, primary_party, county, status, first_seen_at, last_seen_at, mw_low, mw_high').in('id', projIds);
   const projById = new Map<number, any>((projects.data ?? []).map((p) => [(p as any).id, p]));
 
   const docIds = Array.from(new Set((events.data ?? []).map((e) => (e as any).document_id)));
@@ -105,6 +109,10 @@ async function loadSignals(): Promise<SignalRow[]> {
       primary_party: pj?.primary_party ?? null,
       county: pj?.county ?? null,
       status: pj?.status ?? null,
+      project_first_seen_at: pj?.first_seen_at ?? null,
+      project_last_seen_at: pj?.last_seen_at ?? null,
+      project_mw_low: pj?.mw_low ?? null,
+      project_mw_high: pj?.mw_high ?? null,
       event_type: ev?.event_type ?? '?',
       event_description: ev?.description ?? '?',
       before_value: ev?.before_value ?? null,
@@ -121,13 +129,28 @@ async function loadSignals(): Promise<SignalRow[]> {
 function packSignals(rows: SignalRow[]): string {
   const lines: string[] = [];
   for (const s of rows) {
+    const mwBand = s.project_mw_low != null || s.project_mw_high != null ? `${s.project_mw_low ?? '?'}–${s.project_mw_high ?? '?'} MW` : 'no MW band';
+    const mwSpan = s.project_mw_low && s.project_mw_high ? s.project_mw_high / Math.max(1, s.project_mw_low) : null;
+    const mwSpanFlag = mwSpan && mwSpan > 3 ? `  ⚠ WIDE_BAND (${mwSpan.toFixed(1)}× span — RULE 1: do NOT print this band as a real figure)` : '';
+    const firstSeen = s.project_first_seen_at?.slice(0, 10) ?? '?';
+    const docFiled = s.doc_filed_at;
+    const ageInDb = s.project_first_seen_at ? Math.floor((Date.now() - new Date(s.project_first_seen_at).getTime()) / (24 * 60 * 60 * 1000)) : null;
+    const newVsExisting = (() => {
+      if (s.status === 'energized' || s.status === 'under_construction') return 'EXISTING_ASSET (apply RULE 2: do not call "new")';
+      if (ageInDb != null && ageInDb <= 14 && (s.status === 'rumored' || s.status === 'filed')) return 'GENUINELY_NEW';
+      return 'AMBIGUOUS — read source quote in why_it_matters before framing';
+    })();
+
     lines.push(`### sig-${s.id}  score=${s.score}  urgency=${s.urgency}  audiences=[${s.audiences.join(',')}]`);
     lines.push(`project: ${s.project_name} (id=${s.project_id})  party=${s.primary_party ?? '?'}  county=${s.county ?? '?'}  status=${s.status ?? '?'}`);
+    lines.push(`project_mw_band: ${mwBand}${mwSpanFlag}`);
+    lines.push(`first_observed_by_us: ${firstSeen}  (project age in our DB: ${ageInDb ?? '?'} days)`);
+    lines.push(`framing_hint: ${newVsExisting}`);
     lines.push(`event: ${s.event_type} — ${s.event_description}`);
     if (s.before_value) lines.push(`before: ${JSON.stringify(s.before_value).slice(0, 280)}`);
     if (s.after_value) lines.push(`after:  ${JSON.stringify(s.after_value).slice(0, 280)}`);
     lines.push(`why_it_matters: ${s.why_it_matters}`);
-    lines.push(`source: ${s.doc_src} — ${s.doc_title} (${s.doc_filed_at})`);
+    lines.push(`source: ${s.doc_src} — ${s.doc_title} (filed ${docFiled})`);
     lines.push(`url: ${s.doc_url}`);
     lines.push(``);
   }

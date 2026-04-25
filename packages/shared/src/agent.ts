@@ -34,32 +34,38 @@ export async function callJsonAgent<T>(opts: CallJsonAgentOptions<T>): Promise<T
   // zod-to-json-schema wraps in $ref + definitions when given a name; unwrap to a plain object schema
   const inputSchema = jsonSchema?.definitions?.[opts.toolName] ?? jsonSchema;
 
-  const useThinking = opts.thinking ?? 'adaptive';
+  // Cache breakpoint placement:
+  //   - Render order is `tools` -> `system` -> `messages`.
+  //   - `cache_control` on a content block marks the END of a prefix to cache. Everything
+  //      before it (in render order) is part of the cached prefix.
+  //   - We place cache_control on the LAST tool definition. This caches `tools` plus any
+  //     system prompt that comes after gets re-cached on the next breakpoint, giving us
+  //     two cached layers.
+  //   - We also place cache_control on the system block so the prefix `tools + system` is
+  //     cached as a single layer that subsequent calls can read fully.
+  const tool: any = {
+    name: opts.toolName,
+    description: opts.toolDescription,
+    input_schema: inputSchema,
+  };
+  if (opts.cacheSystem) tool.cache_control = { type: 'ephemeral' };
+
   const reqBody: Anthropic.MessageCreateParamsNonStreaming = {
     model: opts.model,
     max_tokens: opts.maxTokens ?? 4000,
     system: opts.cacheSystem
       ? [{ type: 'text', text: opts.systemPrompt, cache_control: { type: 'ephemeral' } }]
       : opts.systemPrompt,
-    tools: [
-      {
-        name: opts.toolName,
-        description: opts.toolDescription,
-        input_schema: inputSchema as any,
-      },
-    ],
-    tool_choice: { type: 'tool', name: opts.toolName } as any,
+    tools: [tool],
+    tool_choice: { type: 'tool', name: opts.toolName, disable_parallel_tool_use: true } as any,
     messages: [{ role: 'user', content: opts.userPayload }],
   };
 
-  // Adaptive thinking is unsupported in conjunction with forced tool_choice on some models;
-  // omit thinking when forcing a tool. Sonnet 4.6 still produces good output without it
-  // because the schema constrains structure.
-  if (useThinking === 'adaptive') {
-    // intentionally omit `thinking` — forced tool_choice + adaptive thinking can conflict
-  }
-
   const resp = await client.messages.create(reqBody);
+  if (process.env.PPI_DEBUG_CACHE === '1') {
+    const u = resp.usage as any;
+    console.log(`  [DEBUG ${opts.agent}/${opts.model}] in=${u.input_tokens} cR=${u.cache_read_input_tokens ?? 0} cW=${u.cache_creation_input_tokens ?? 0} out=${u.output_tokens}`);
+  }
   await recordCost({ agent: opts.agent, model: opts.model, usage: resp.usage, request_id: resp.id });
 
   const toolUse = resp.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use' && b.name === opts.toolName);
