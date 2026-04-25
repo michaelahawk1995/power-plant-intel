@@ -27,6 +27,12 @@ All run from the repo root after `pnpm install`.
 | Generate the signals snapshot Markdown | `pnpm tsx scripts/report-top-signals.ts` |
 | Wipe APLD test data | `pnpm tsx scripts/wipe-apld.ts` |
 | Wipe everything except APLD | `pnpm tsx scripts/wipe-non-apld.ts` |
+| **Slice 2:** resolve extractions to canonical projects | `pnpm tsx scripts/run-tracking.ts` |
+| Slice 2: emit typed change events | `pnpm tsx scripts/run-changes.ts` |
+| Slice 2: score change events 1–10 | `pnpm tsx scripts/run-scoring.ts` |
+| Slice 2: draft Monday Briefing → `docs/BRIEFING_LATEST.md` | `pnpm tsx scripts/run-briefing.ts` |
+| Slice 2: QA briefing + extraction sample (Haiku proxy) | `pnpm tsx scripts/run-qa.ts` |
+| Slice 2: wipe derived tables (keeps extractions) | `pnpm tsx scripts/wipe-slice2.ts` |
 
 ## How a filing flows through the slice-1 pipeline
 
@@ -50,7 +56,9 @@ document_chunks (triage_flag=true)
 extractions
 ```
 
-Slices 2-4 will add: `projects` (dedup), `change_events` (typed diffs), `signals` (1-10 score + audience), `briefings` (Monday email), and the dashboard front-end.
+**Slice 2 (shipped):** extractions → `projects` (Sonnet tracker decides merge/create/ambiguous) → `change_events` (typed diffs vs prior state, with `is_substantive` flag) → `signals` (1–10 score + audience + urgency + why-it-matters, calibrated against the rolling distribution) → `briefings` (Editorial Synthesis writes a quote-cited Markdown draft per week) → `qa_flags` (Haiku 4.5 cross-checks the briefing against its source signals AND samples extractions for source_snippet adherence). All structured-output agents use Anthropic tool-use forcing via `callJsonAgent` (`packages/shared/src/agent.ts`) — no more loose JSON parsing.
+
+Slices 3–4 will add: alert/dashboard delivery (Resend + Cloudflare Pages), additional source families (ERCOT, PUCT, TCEQ, county agendas), and the cold-email outreach chain.
 
 ## Cost guardrails
 
