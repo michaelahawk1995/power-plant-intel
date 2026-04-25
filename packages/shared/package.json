@@ -1,0 +1,24 @@
+{
+  "name": "@ppi/shared",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./anthropic": "./src/anthropic.ts",
+    "./supabase": "./src/supabase.ts",
+    "./edgar": "./src/edgar.ts",
+    "./env": "./src/env.ts",
+    "./html": "./src/html.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.88.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "power-plant-intel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-native intelligence on Texas data centers and behind-the-meter power.",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "schema:apply": "tsx scripts/apply-schema.ts",
+    "edgar:cycle": "tsx scripts/run-edgar-cycle.ts",
+    "seed:watchlist": "tsx scripts/seed-watchlist.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

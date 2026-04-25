@@ -1,0 +1,37 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- node ---
+node_modules/
+dist/
+build/
+.next/
+.turbo/
+.wrangler/
+.dev.vars
+*.log
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- editor ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# --- scoping artifacts ---
+.scoping/
+.firecrawl/
+/tmp/
+
+# --- supabase local ---
+supabase/.branches
+supabase/.temp
